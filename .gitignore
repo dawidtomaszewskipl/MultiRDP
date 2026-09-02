@@ -1,0 +1,15 @@
+# Build
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+*.suo
+
+# Visual Studio
+.vs/
+
+# Interop COM generowany lokalnie z mstscax.dll (patrz README)
+MultiRDP/libs/*.dll
+
+# Lokalna konfiguracja
+appsettings.local.json

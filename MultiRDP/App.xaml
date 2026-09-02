@@ -1,0 +1,11 @@
+<Application x:Class="MultiRDP.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <!-- Globalny styl TextBlock / Global TextBlock style -->
+        <Style TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Foreground" Value="#EEEEEE"/>
+        </Style>
+    </Application.Resources>
+</Application>
