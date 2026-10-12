@@ -1,4 +1,4 @@
-<Window x:Class="MultiRDP.Views.SecondaryWindow"
+<Window x:Class="MultiRDP.Views.SessionWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wf="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
@@ -9,8 +9,8 @@
         AllowsTransparency="False"
         ShowInTaskbar="False">
 
-    <!-- Okno rozciągnięte na oba monitory — zawiera wyłącznie kontrolkę RDP (UseMultimon=true) -->
-    <!-- Window spanning both monitors — contains only the RDP control (UseMultimon=true) -->
+    <!-- Okno rozciągnięte na parę monitorów — zawiera wyłącznie kontrolkę RDP (UseMultimon=true) -->
+    <!-- Window spanning the monitor pair — contains only the RDP control (UseMultimon=true) -->
     <wf:WindowsFormsHost x:Name="RdpHost"
                          Background="Black"/>
 

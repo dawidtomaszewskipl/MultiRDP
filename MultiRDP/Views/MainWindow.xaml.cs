@@ -1,45 +1,31 @@
-using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
-using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using MultiRDP.Services;
 using MultiRDP.ViewModels;
 
 namespace MultiRDP.Views;
 
 /// <summary>
-/// Floating panel wycentrowany i przyklejony do górnej krawędzi monitora głównego.
+/// Pływający pasek zakładek przyklejony do górnej krawędzi pierwszego monitora sesji.
 /// Obsługuje tryb auto-chowaj (odpięty) — pojawia się po najechaniu na 3px pasek u góry.
 ///
-/// Floating panel centered and stuck to the top edge of the primary monitor.
+/// Floating tab bar stuck to the top edge of the first session monitor.
 /// Supports auto-hide (unpinned) — appears when hovering over the 3px strip at the top.
 /// </summary>
 public partial class MainWindow : Window
 {
-    private readonly MainViewModel    _viewModel;
-    private readonly List<Button>     _tabButtons = new();
+    private readonly MainViewModel _viewModel;
+    private HotkeyService? _hotkeys;
 
     // Przypinanie i auto-hide / Pinning and auto-hide
-    private bool             _isPinned  = true;
-    private double           _visibleTop;
-    private double           _hiddenTop;
-    private DispatcherTimer? _hideTimer;
-
-    // Win32
-    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
-    [DllImport("user32.dll")] private static extern bool SetWindowPos(
-        IntPtr h, IntPtr ins, int X, int Y, int cx, int cy, uint f);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT { public int Left, Top, Right, Bottom; }
-
-    private const uint SWP_NOSIZE     = 0x0001;
-    private const uint SWP_NOZORDER   = 0x0004;
-    private const uint SWP_NOACTIVATE = 0x0010;
+    private bool   _isPinned = true;
+    private double _visibleTop;
+    private double _hiddenTop;
+    private System.Drawing.Rectangle _monitorBounds; // logiczne px / logical px
+    private readonly DispatcherTimer _hideTimer;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -47,68 +33,86 @@ public partial class MainWindow : Window
         _viewModel  = viewModel;
         DataContext = viewModel;
 
-        _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+        _hideTimer.Tick += (_, _) =>
+        {
+            _hideTimer.Stop();
+            if (!IsMouseOver && !MenuPopup.IsOpen) AnimateTo(_hiddenTop);
+        };
 
-        Loaded   += OnLoaded;
+        Loaded += (_, _) => Dispatcher.BeginInvoke(InitializePosition, DispatcherPriority.Render);
+
+        // Liczba zakładek zmienia szerokość paska → wyśrodkuj ponownie
+        // Tab count changes the bar width → re-center
+        SizeChanged += (_, e) => { if (e.WidthChanged && IsLoaded) InitializePosition(); };
 
         // Popup zamknięty → sprawdź czy schować / Popup closed → check if should hide
         MenuPopup.Closed += (_, _) =>
         {
             if (!_isPinned && !IsMouseOver) ScheduleHide();
         };
+
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e)
+    protected override void OnSourceInitialized(EventArgs e)
     {
-        BuildTabButtons();
-        UpdateTabStyles();
-        UpdateStatusDot(_viewModel.ActiveSessionStatus);
+        base.OnSourceInitialized(e);
 
-        // Poczekaj na pełne wyrenderowanie przed pomiarem / Wait for full render before measuring
-        Dispatcher.BeginInvoke(InitializePosition, DispatcherPriority.Render);
+        _hotkeys = new HotkeyService(this);
+        _hotkeys.Pressed += index => _viewModel.SelectHost(index);
+        _hotkeys.Register(_viewModel.Sessions.Count);
+        _viewModel.Sessions.CollectionChanged += (_, _) => _hotkeys.Register(_viewModel.Sessions.Count);
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _hotkeys?.Dispose();
+        base.OnClosed(e);
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+        => Dispatcher.BeginInvoke(InitializePosition, DispatcherPriority.Render);
 
     // ─────────────────────────────────────────────────────────────
     //  Pozycjonowanie / Positioning
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Wycentruj panel poziomo na monitorze głównym, przyklejony do górnej krawędzi.
-    /// Center panel horizontally on primary monitor, flush to the top edge.
+    /// Wycentruj panel poziomo na pierwszym monitorze sesji, przyklejony do górnej krawędzi.
+    /// Center panel horizontally on the first session monitor, flush to the top edge.
     /// </summary>
     public void InitializePosition()
     {
-        var screens = System.Windows.Forms.Screen.AllScreens;
-        int idx = Math.Clamp(_viewModel.Settings.PrimaryMonitorIndex, 0, screens.Length - 1);
-        var b = screens[idx].Bounds; // fizyczne piksele / physical pixels
+        var b = MonitorService.GetBounds(_viewModel.Settings.PrimaryMonitorIndex); // fizyczne px / physical px
 
         var src  = PresentationSource.FromVisual(this);
         double dpiX = src?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
         double dpiY = src?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
 
-        // Logiczne granice monitora / Logical monitor bounds
-        double monL = b.Left  / dpiX;
-        double monT = b.Top   / dpiY;
-        double monW = b.Width / dpiX;
+        _monitorBounds = new System.Drawing.Rectangle(
+            (int)(b.Left / dpiX), (int)(b.Top / dpiY), (int)(b.Width / dpiX), (int)(b.Height / dpiY));
 
-        // Wycentruj poziomo / Center horizontally
-        Left = monL + (monW - ActualWidth) / 2.0;
-
-        // Widoczna pozycja = górna krawędź monitora / Visible = top edge of monitor
-        _visibleTop = monT;
+        Left        = _monitorBounds.Left + (_monitorBounds.Width - ActualWidth) / 2.0;
+        _visibleTop = _monitorBounds.Top;
 
         // Ukryta pozycja = 3 fizyczne piksele widoczne u góry / Hidden = 3 physical pixels peek
-        _hiddenTop = monT - ActualHeight + 3.0 / dpiY;
+        _hiddenTop = _monitorBounds.Top - ActualHeight + 3.0 / dpiY;
 
-        // Ustaw pozycję zgodnie ze stanem / Set position per current state
-        Top = _isPinned ? _visibleTop : _hiddenTop;
-
+        SetTop(_isPinned ? _visibleTop : _hiddenTop);
         UpdatePinButton();
     }
 
-    // ─────────────────────────────────────────────────────────────
-    //  Animacja / Animation
-    // ─────────────────────────────────────────────────────────────
+    /// <summary>
+    /// Ustawia Top bez animacji. Animacja trzyma wartość właściwości, więc trzeba ją najpierw zdjąć.
+    /// Sets Top without animation. An animation holds the property value, so it must be removed first.
+    /// </summary>
+    private void SetTop(double top)
+    {
+        BeginAnimation(TopProperty, null);
+        Top = top;
+    }
 
     private void AnimateTo(double targetTop)
     {
@@ -122,7 +126,7 @@ public partial class MainWindow : Window
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  Przypinanie / Pinning
+    //  Przypinanie i auto-hide / Pinning and auto-hide
     // ─────────────────────────────────────────────────────────────
 
     private void TogglePin()
@@ -132,34 +136,28 @@ public partial class MainWindow : Window
 
         if (_isPinned)
         {
-            _hideTimer?.Stop();
+            _hideTimer.Stop();
             AnimateTo(_visibleTop);
         }
         else
         {
-            // Schowaj po chwili jeśli mysz poza panelem / Hide after delay if mouse is outside
             ScheduleHide();
         }
     }
 
     private void UpdatePinButton()
     {
-        if (BtnPinMenuItem is null) return;
         BtnPinMenuItem.Content = _isPinned
             ? "📌  Odepnij (auto-chowaj)"
             : "📌  Przypnij (zawsze widoczny)";
     }
-
-    // ─────────────────────────────────────────────────────────────
-    //  Auto-hide — mysz / Auto-hide — mouse
-    // ─────────────────────────────────────────────────────────────
 
     protected override void OnMouseEnter(System.Windows.Input.MouseEventArgs e)
     {
         base.OnMouseEnter(e);
         if (!_isPinned)
         {
-            _hideTimer?.Stop();
+            _hideTimer.Stop();
             AnimateTo(_visibleTop);
         }
     }
@@ -173,93 +171,30 @@ public partial class MainWindow : Window
     private void ScheduleHide()
     {
         if (MenuPopup.IsOpen) return;
-
-        _hideTimer?.Stop();
-        _hideTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
-        _hideTimer.Tick += (_, _) =>
-        {
-            _hideTimer!.Stop();
-            if (!IsMouseOver && !MenuPopup.IsOpen)
-                AnimateTo(_hiddenTop);
-        };
+        _hideTimer.Stop();
         _hideTimer.Start();
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  Zakładki hostów / Host tabs
+    //  Przeciąganie — tylko w poziomie / Drag — horizontal only
     // ─────────────────────────────────────────────────────────────
 
-    private void BuildTabButtons()
+    private void Border_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        HostTabsPanel.Items.Clear();
-        _tabButtons.Clear();
+        if (e.ClickCount != 1) return;
 
-        for (int i = 0; i < _viewModel.Hosts.Count; i++)
-        {
-            int idx  = i;
-            var host = _viewModel.Hosts[i];
-            var btn  = new Button
-            {
-                Content = host.Name,
-                Tag     = idx,
-                Margin  = new Thickness(2, 0, 2, 0),
-                Style   = idx == _viewModel.SelectedHostIndex
-                              ? (Style)Resources["HostTabActiveStyle"]
-                              : (Style)Resources["HostTabStyle"]
-            };
-            btn.Click += (_, _) => SelectHost(idx);
-            _tabButtons.Add(btn);
-            HostTabsPanel.Items.Add(btn);
-        }
-    }
+        SetTop(Top);
+        DragMove(); // blokuje do puszczenia przycisku / blocks until the button is released
 
-    private void SelectHost(int index)
-    {
-        if (index == _viewModel.SelectedHostIndex) return;
-        _viewModel.SelectedHostIndex = index;
-        UpdateTabStyles();
-    }
-
-    private void UpdateTabStyles()
-    {
-        for (int i = 0; i < _tabButtons.Count; i++)
-        {
-            _tabButtons[i].Style = i == _viewModel.SelectedHostIndex
-                ? (Style)Resources["HostTabActiveStyle"]
-                : (Style)Resources["HostTabStyle"];
-        }
-    }
-
-    private void UpdateStatusDot(string status)
-    {
-        bool connected  = status == "Połączono";
-        bool connecting = status.StartsWith("Łącz");
-
-        StatusDot.Fill = connecting
-            ? new SolidColorBrush(Colors.Orange)
-            : connected
-                ? new SolidColorBrush(WpfColor.FromRgb(76, 175, 80))
-                : new SolidColorBrush(WpfColor.FromRgb(70, 70, 70));
-
-        StatusDot.ToolTip = status;
-    }
-
-    private void ViewModel_PropertyChanged(object? sender,
-        System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        switch (e.PropertyName)
-        {
-            case nameof(MainViewModel.ActiveSessionStatus):
-                Dispatcher.Invoke(() => UpdateStatusDot(_viewModel.ActiveSessionStatus));
-                break;
-            case nameof(MainViewModel.Hosts):
-                Dispatcher.Invoke(() => { BuildTabButtons(); UpdateTabStyles(); });
-                break;
-        }
+        // Zostań na krawędzi i w granicach monitora / Stay on the edge and within the monitor
+        double maxLeft = _monitorBounds.Right - ActualWidth;
+        Left = Math.Clamp(Left, _monitorBounds.Left, Math.Max(_monitorBounds.Left, maxLeft));
+        SetTop(_visibleTop);
+        if (!_isPinned && !IsMouseOver) ScheduleHide();
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  Obsługa przycisków / Button handlers
+    //  Menu
     // ─────────────────────────────────────────────────────────────
 
     private void BtnMenu_Click(object sender, RoutedEventArgs e)
@@ -274,13 +209,19 @@ public partial class MainWindow : Window
     private void BtnConnect_Click(object sender, RoutedEventArgs e)
     {
         MenuPopup.IsOpen = false;
-        _viewModel.ConnectCommand.Execute(null);
+        _viewModel.Connect();
     }
 
     private void BtnDisconnect_Click(object sender, RoutedEventArgs e)
     {
         MenuPopup.IsOpen = false;
-        _viewModel.DisconnectCommand.Execute(null);
+        _viewModel.Disconnect();
+    }
+
+    private void BtnConnectAll_Click(object sender, RoutedEventArgs e)
+    {
+        MenuPopup.IsOpen = false;
+        _viewModel.ConnectAll();
     }
 
     private void BtnSettings_Click(object sender, RoutedEventArgs e)
@@ -292,49 +233,53 @@ public partial class MainWindow : Window
     private void BtnClose_Click(object sender, RoutedEventArgs e)
     {
         MenuPopup.IsOpen = false;
-        Application.Current.Shutdown();
+        Close();
     }
 
     private void OpenSettings()
     {
         var win = new SettingsWindow(_viewModel.Settings) { Owner = this };
-        if (win.ShowDialog() == true)
+        if (win.ShowDialog() != true) return;
+
+        if (_viewModel.ApplySettings(win.Result!) is { } error)
         {
-            _viewModel.ApplySettings(win.Result!);
-            BuildTabButtons();
-            UpdateTabStyles();
-            Dispatcher.BeginInvoke(InitializePosition, DispatcherPriority.Render);
+            MessageBox.Show(this,
+                $"Ustawienia zastosowano, ale nie udało się ich zapisać:\n{error}",
+                "MultiRDP", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+
+        Dispatcher.BeginInvoke(InitializePosition, DispatcherPriority.Render);
     }
 
     // ─────────────────────────────────────────────────────────────
-    //  Przeciąganie / Drag
-    // ─────────────────────────────────────────────────────────────
-
-    private void Border_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (e.ClickCount == 1) DragMove();
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    //  Skróty / Shortcuts
+    //  Skróty lokalne (fokus na pasku) / Local shortcuts (tab bar focused)
+    //  Globalne Ctrl+Alt+1..4 obsługuje HotkeyService / Global Ctrl+Alt+1..4 handled by HotkeyService
     // ─────────────────────────────────────────────────────────────
 
     protected override void OnKeyDown(WpfKeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (Keyboard.Modifiers != ModifierKeys.Control) return;
 
-        if (e.Key == Key.OemComma && Keyboard.Modifiers == ModifierKeys.Control)
-        { OpenSettings(); return; }
-
-        if (Keyboard.Modifiers == ModifierKeys.Control)
+        if (e.Key == Key.OemComma)
         {
-            int? tab = e.Key switch
-            {
-                Key.D1 => 0, Key.D2 => 1, Key.D3 => 2, Key.D4 => 3, _ => null
-            };
-            if (tab.HasValue && tab.Value < _viewModel.Hosts.Count)
-                SelectHost(tab.Value);
+            OpenSettings();
+            e.Handled = true;
+            return;
+        }
+
+        int index = e.Key switch
+        {
+            Key.D1 or Key.NumPad1 => 0,
+            Key.D2 or Key.NumPad2 => 1,
+            Key.D3 or Key.NumPad3 => 2,
+            Key.D4 or Key.NumPad4 => 3,
+            _ => -1
+        };
+        if (index >= 0)
+        {
+            _viewModel.SelectHost(index);
+            e.Handled = true;
         }
     }
 }

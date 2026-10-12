@@ -14,36 +14,63 @@
             <Setter Property="Background"      Value="Transparent"/>
             <Setter Property="Foreground"      Value="#AAAAAA"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="Padding"         Value="12,7,14,7"/>
+            <Setter Property="Margin"          Value="2,0"/>
             <Setter Property="FontFamily"      Value="Segoe UI"/>
             <Setter Property="FontSize"        Value="12"/>
             <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Focusable"       Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                        <Border Background="{TemplateBinding Background}"
                                 CornerRadius="5" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#252525"/>
-                                <Setter Property="Foreground" Value="#EEEEEE"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
-        </Style>
-
-        <Style x:Key="HostTabActiveStyle" TargetType="Button" BasedOn="{StaticResource HostTabStyle}">
-            <Setter Property="Background" Value="#0078D4"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#106EBE"/>
+                    <Setter Property="Background" Value="#252525"/>
+                    <Setter Property="Foreground" Value="#EEEEEE"/>
                 </Trigger>
+                <!-- Aktywna zakładka / Active tab -->
+                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                    <Setter Property="Background" Value="#0078D4"/>
+                    <Setter Property="Foreground" Value="White"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IsActive}" Value="True"/>
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#106EBE"/>
+                </MultiDataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Kropka statusu sesji / Session status dot -->
+        <Style x:Key="StatusDotStyle" TargetType="Ellipse">
+            <Setter Property="Width"             Value="7"/>
+            <Setter Property="Height"            Value="7"/>
+            <Setter Property="Margin"            Value="0,0,7,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Fill"              Value="#5A5A5A"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="Connected">
+                    <Setter Property="Fill" Value="#4CAF50"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Connecting">
+                    <Setter Property="Fill" Value="Orange"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Reconnecting">
+                    <Setter Property="Fill" Value="Orange"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="Error">
+                    <Setter Property="Fill" Value="#EF5350"/>
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -130,20 +157,28 @@
 
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
 
-                <!-- Wskaźnik statusu / Status indicator -->
-                <Ellipse x:Name="StatusDot"
-                         Width="7" Height="7"
-                         Fill="#444"
-                         Margin="6,0,6,0"
-                         VerticalAlignment="Center"/>
-
-                <!-- Zakładki hostów / Host tabs -->
-                <ItemsControl x:Name="HostTabsPanel">
+                <!-- Zakładki sesji (1–4) / Session tabs (1–4) -->
+                <ItemsControl ItemsSource="{Binding Sessions}" Margin="2,0,0,0">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
                             <StackPanel Orientation="Horizontal"/>
                         </ItemsPanelTemplate>
                     </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Style="{StaticResource HostTabStyle}"
+                                    Command="{Binding DataContext.SelectSessionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                    CommandParameter="{Binding}"
+                                    ToolTip="{Binding ToolTip}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Style="{StaticResource StatusDotStyle}"/>
+                                    <TextBlock Text="{Binding Name}"
+                                               VerticalAlignment="Center"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
                 <!-- Separator -->
@@ -197,10 +232,15 @@
                             Foreground="#EF5350"
                             Click="BtnDisconnect_Click"/>
 
+                    <!-- Połącz wszystkie / Connect all -->
+                    <Button Content="↻  Połącz ponownie wszystkie"
+                            Style="{StaticResource MenuItemBtnStyle}"
+                            Click="BtnConnectAll_Click"/>
+
                     <Rectangle Height="1" Fill="#252525" Margin="8,3"/>
 
                     <!-- Ustawienia / Settings -->
-                    <Button Content="⚙  Ustawienia"
+                    <Button Content="⚙  Ustawienia (Ctrl+,)"
                             Style="{StaticResource MenuItemBtnStyle}"
                             Click="BtnSettings_Click"/>
 

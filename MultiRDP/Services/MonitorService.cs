@@ -1,6 +1,6 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using MultiRDP.Interop;
 using WinForms = System.Windows.Forms;
 
 namespace MultiRDP.Services;
@@ -16,19 +16,8 @@ namespace MultiRDP.Services;
 /// </summary>
 public static class MonitorService
 {
-    // --- Win32 P/Invoke ---
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetWindowPos(
-        IntPtr hWnd, IntPtr hWndInsertAfter,
-        int X, int Y, int cx, int cy,
-        uint uFlags);
-
-    private const uint SWP_NOZORDER     = 0x0004;
-    private const uint SWP_NOACTIVATE   = 0x0010;
-    private const uint SWP_FRAMECHANGED = 0x0020;
-    private const uint SWP_FLAGS        = SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED;
-
-    // --- Publiczne API ---
+    private const uint SWP_FLAGS =
+        NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED;
 
     /// <summary>
     /// Zwraca listę dostępnych monitorów.
@@ -36,63 +25,24 @@ public static class MonitorService
     /// </summary>
     public static List<MonitorInfo> GetMonitors()
     {
-        var result  = new List<MonitorInfo>();
         var screens = WinForms.Screen.AllScreens;
-
-        for (int i = 0; i < screens.Length; i++)
+        return screens.Select((s, i) => new MonitorInfo
         {
-            result.Add(new MonitorInfo
-            {
-                Index     = i,
-                Name      = $"Monitor {i + 1}: {screens[i].DeviceName.Replace("\\\\.\\", "")}",
-                Bounds    = screens[i].Bounds,
-                IsPrimary = screens[i].Primary
-            });
-        }
-        return result;
+            Index     = i,
+            Bounds    = s.Bounds,
+            IsPrimary = s.Primary
+        }).ToList();
     }
 
     /// <summary>
-    /// Pozycjonuje okno na jednym monitorze pełnoekranowo (fizyczne piksele przez Win32).
-    /// Positions a window fullscreen on one monitor (physical pixels via Win32).
+    /// Granice monitora w fizycznych pikselach (indeks spoza zakresu → monitor 0).
+    /// Monitor bounds in physical pixels (out-of-range index → monitor 0).
     /// </summary>
-    public static void SetWindowFullscreen(Window window, int monitorIndex)
+    public static System.Drawing.Rectangle GetBounds(int monitorIndex)
     {
         var screens = WinForms.Screen.AllScreens;
         if (monitorIndex < 0 || monitorIndex >= screens.Length) monitorIndex = 0;
-
-        var b = screens[monitorIndex].Bounds;
-        window.WindowState = WindowState.Normal;
-
-        var hwnd = new WindowInteropHelper(window).Handle;
-        if (hwnd != IntPtr.Zero)
-            SetWindowPos(hwnd, IntPtr.Zero, b.X, b.Y, b.Width, b.Height, SWP_FLAGS);
-        else
-            SetWindowLogical(window, b.X, b.Y, b.Width, b.Height, monitorIndex);
-    }
-
-    /// <summary>
-    /// Pozycjonuje okno rozpiętym na dwóch monitorach (fizyczne piksele przez Win32).
-    /// Positions a window spanning two monitors (physical pixels via Win32).
-    /// </summary>
-    public static void SetWindowSpanning(Window window, int primaryIndex, int secondaryIndex)
-    {
-        var bounds = GetSpanningBounds(primaryIndex, secondaryIndex);
-        window.WindowState = WindowState.Normal;
-
-        var hwnd = new WindowInteropHelper(window).Handle;
-        if (hwnd != IntPtr.Zero)
-        {
-            SetWindowPos(hwnd, IntPtr.Zero,
-                bounds.X, bounds.Y, bounds.Width, bounds.Height,
-                SWP_FLAGS);
-        }
-        else
-        {
-            // HWND jeszcze nie istnieje (przed Show()) — użyj przybliżonego WPF
-            // HWND doesn't exist yet (before Show()) — use approximate WPF
-            SetWindowLogical(window, bounds.X, bounds.Y, bounds.Width, bounds.Height, primaryIndex);
-        }
+        return screens[monitorIndex].Bounds;
     }
 
     /// <summary>
@@ -100,44 +50,45 @@ public static class MonitorService
     /// Calculates the bounding rectangle covering exactly two specified monitors.
     /// </summary>
     public static System.Drawing.Rectangle GetSpanningBounds(int primaryIndex, int secondaryIndex)
-    {
-        var screens = WinForms.Screen.AllScreens;
-        if (primaryIndex   < 0 || primaryIndex   >= screens.Length) primaryIndex   = 0;
-        if (secondaryIndex < 0 || secondaryIndex >= screens.Length) secondaryIndex = 0;
-
-        var s1 = screens[primaryIndex].Bounds;
-        var s2 = screens[secondaryIndex].Bounds;
-
-        int left   = Math.Min(s1.Left,   s2.Left);
-        int top    = Math.Min(s1.Top,    s2.Top);
-        int right  = Math.Max(s1.Right,  s2.Right);
-        int bottom = Math.Max(s1.Bottom, s2.Bottom);
-
-        return new System.Drawing.Rectangle(left, top, right - left, bottom - top);
-    }
+        => System.Drawing.Rectangle.Union(GetBounds(primaryIndex), GetBounds(secondaryIndex));
 
     /// <summary>
-    /// Zwraca fizyczne wymiary monitora.
-    /// Returns physical dimensions of a monitor.
+    /// Pozycjonuje okno rozpiętym na dwóch monitorach (fizyczne piksele przez Win32).
+    /// Positions a window spanning two monitors (physical pixels via Win32).
     /// </summary>
-    public static (int Width, int Height) GetMonitorPhysicalSize(int monitorIndex)
-    {
-        var screens = WinForms.Screen.AllScreens;
-        if (monitorIndex < 0 || monitorIndex >= screens.Length) monitorIndex = 0;
-        var b = screens[monitorIndex].Bounds;
-        return (b.Width, b.Height);
-    }
+    public static void SetWindowSpanning(Window window, int primaryIndex, int secondaryIndex)
+        => PositionWindow(window, GetSpanningBounds(primaryIndex, secondaryIndex));
 
-    // --- Helpers ---
+    /// <summary>
+    /// Ustawia okno na prostokącie w fizycznych pikselach.
+    /// Places a window on a rectangle given in physical pixels.
+    /// </summary>
+    public static void PositionWindow(Window window, System.Drawing.Rectangle bounds)
+    {
+        window.WindowState = WindowState.Normal;
+
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd != IntPtr.Zero)
+        {
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero,
+                bounds.X, bounds.Y, bounds.Width, bounds.Height, SWP_FLAGS);
+        }
+        else
+        {
+            // HWND jeszcze nie istnieje (przed Show()) — użyj przybliżonego WPF
+            // HWND doesn't exist yet (before Show()) — use approximate WPF
+            SetWindowLogical(window, bounds);
+        }
+    }
 
     /// <summary>
     /// Fallback: ustawia pozycję okna przez WPF z korekcją DPI.
     /// Fallback: sets window position via WPF with DPI correction.
     /// </summary>
-    private static void SetWindowLogical(Window window, int x, int y, int w, int h, int monitorIdx)
+    private static void SetWindowLogical(Window window, System.Drawing.Rectangle b)
     {
         var source = PresentationSource.FromVisual(window);
-        double dpiX = 1.0, dpiY = 1.0;
+        double dpiX, dpiY;
 
         if (source?.CompositionTarget != null)
         {
@@ -146,25 +97,28 @@ public static class MonitorService
         }
         else
         {
-            // Próbuj uzyskać DPI z innego źródła / Try getting DPI from another source
             using var gfx = System.Drawing.Graphics.FromHwnd(IntPtr.Zero);
             dpiX = dpiY = gfx.DpiX / 96.0;
         }
 
-        window.Left   = x / dpiX;
-        window.Top    = y / dpiY;
-        window.Width  = w / dpiX;
-        window.Height = h / dpiY;
+        window.Left   = b.X      / dpiX;
+        window.Top    = b.Y      / dpiY;
+        window.Width  = b.Width  / dpiX;
+        window.Height = b.Height / dpiY;
     }
 }
 
 /// <summary>Informacje o monitorze / Monitor information</summary>
 public class MonitorInfo
 {
-    public int                        Index     { get; set; }
-    public string                     Name      { get; set; } = string.Empty;
-    public System.Drawing.Rectangle   Bounds    { get; set; }
-    public bool                       IsPrimary { get; set; }
+    public int                      Index     { get; set; }
+    public System.Drawing.Rectangle Bounds    { get; set; }
+    public bool                     IsPrimary { get; set; }
 
-    public override string ToString() => IsPrimary ? $"{Name} (główny)" : Name;
+    /// <summary>Etykieta z rozmiarem i pozycją do identyfikacji / Label with size and position</summary>
+    public override string ToString()
+    {
+        string label = $"Monitor {Index + 1} [{Bounds.Width}×{Bounds.Height}] @ ({Bounds.X}, {Bounds.Y})";
+        return IsPrimary ? $"{label} (główny)" : label;
+    }
 }
