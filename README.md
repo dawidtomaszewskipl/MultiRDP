@@ -40,6 +40,7 @@ Aplikacja działa na produkcji.
   - `Ctrl+Alt+1..4` — globalnie, także z fokusem w sesji RDP (patrz niżej)
   - `Ctrl+1..4`, `Ctrl+,` (ustawienia) — gdy fokus jest na pasku zakładek
 - Hasła szyfrowane przez DPAPI
+- **Automatyczna akceptacja certyfikatu hosta** (wyłączalna) — bez okna ostrzeżenia blokującego łączenie
 - Log zdarzeń połączeń w `%LocalAppData%\MultiRDP\logs\`
 - Jedna instancja aplikacji naraz; okna dopasowują się do zmian konfiguracji ekranów
 - Ciemny motyw interfejsu
@@ -128,6 +129,12 @@ MultiRDP/
   lokalnie — klient RDP nie przechwytuje wtedy klawiatury i `Ctrl+Alt+1..4` przełączają zakładki
   także z fokusem w sesji. Opcja *„Wysyłaj kombinacje Windows do sesji zdalnej”* przywraca
   przechwytywanie (`KeyboardHookMode = 2`), ale wtedy skróty globalne nie działają z fokusem w sesji.
+- **Certyfikat hosta.** Domyślnie certyfikat jest akceptowany automatycznie, bez weryfikacji
+  (`AuthenticationLevel = 0`). Okno ostrzeżenia kontrolki RDP potrafiło zawisnąć niewidoczne
+  w pełnoekranowym oknie sesji i blokować łączenie. Kosztem jest brak ochrony przed podszyciem się
+  pod host, dlatego odcisk SHA-256 klucza serwera trafia do logu przy każdym połączeniu, a jego
+  zmiana jest oznaczana jako ostrzeżenie. Opcję można wyłączyć w ustawieniach (sekcja *Sesje*) —
+  wtedy kontrolka znowu pyta, a zakładka pokazuje, że sesja czeka na potwierdzenie.
 - **Numeracja monitorów.** `selectedmonitors` przyjmuje identyfikatory monitorów klienta RDP
   (te z `mstsc /l`), a aplikacja przekazuje indeksy z `Screen.AllScreens`. Na stanowisku
   produkcyjnym są zgodne; na innym sprzęcie warto to sprawdzić przyciskiem „Identyfikuj”.

@@ -21,6 +21,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int  _secondaryMonitorIndex;
     [ObservableProperty] private bool _autoReconnect;
     [ObservableProperty] private bool _remoteWindowsKeys;
+    [ObservableProperty] private bool _acceptAnyCertificate;
 
     public SettingsViewModel(AppSettings current)
     {
@@ -34,6 +35,7 @@ public partial class SettingsViewModel : ObservableObject
         SecondaryMonitorIndex = Math.Clamp(current.SecondaryMonitorIndex, 0, last);
         AutoReconnect         = current.AutoReconnect;
         RemoteWindowsKeys     = current.RemoteWindowsKeys;
+        AcceptAnyCertificate  = current.AcceptAnyCertificate;
 
         Hosts.CollectionChanged += (_, _) => UpdateHostPositions();
         UpdateHostPositions();
@@ -110,7 +112,8 @@ public partial class SettingsViewModel : ObservableObject
             SecondaryMonitorIndex = SecondaryMonitorIndex,
             ActiveHostIndex       = active,
             AutoReconnect         = AutoReconnect,
-            RemoteWindowsKeys     = RemoteWindowsKeys
+            RemoteWindowsKeys     = RemoteWindowsKeys,
+            AcceptAnyCertificate  = AcceptAnyCertificate
         };
     }
 }

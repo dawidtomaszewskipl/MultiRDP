@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Windows.Forms;
 using AxMSTSCLib;
 using MSTSCLib;
@@ -15,6 +17,17 @@ public sealed record RdpDisconnectInfo(int Reason, int ExtendedReason, string De
     /// <summary>exDiscReasonReplacedByOtherConnection — sesję przejął inny klient / another client took over</summary>
     public bool ReplacedByOtherConnection => ExtendedReason == 5;
 }
+
+/// <summary>Parametry połączenia niezależne od hosta / Host-independent connection parameters</summary>
+/// <param name="PrimaryMonitor">Pierwszy monitor sesji / First session monitor</param>
+/// <param name="SecondaryMonitor">Drugi monitor sesji / Second session monitor</param>
+/// <param name="RemoteWindowsKeys">Kombinacje Windows do sesji zdalnej / Windows key combinations to the remote session</param>
+/// <param name="AcceptAnyCertificate">Akceptuj certyfikat hosta bez weryfikacji / Accept host certificate without verification</param>
+public sealed record RdpConnectOptions(
+    int  PrimaryMonitor,
+    int  SecondaryMonitor,
+    bool RemoteWindowsKeys,
+    bool AcceptAnyCertificate);
 
 /// <summary>
 /// Kontrolka WinForms hostująca ActiveX RDP (MsRdpClient11).
@@ -34,6 +47,11 @@ public class RdpHostControl : UserControl
     public event EventHandler<string>?            ConnectionError;
     public event EventHandler<int>?               AutoReconnecting;
     public event EventHandler?                    AutoReconnected;
+    public event EventHandler?                    CertificatePromptShown;
+    public event EventHandler?                    CertificatePromptDismissed;
+
+    /// <summary>SHA-256 klucza publicznego serwera (hex) / Server public key SHA-256 (hex)</summary>
+    public event EventHandler<string>?            ServerKeyReceived;
 
     /// <summary>Połączona lub w trakcie łączenia / Connected or connecting</summary>
     public bool IsBusy { get; private set; }
@@ -54,6 +72,9 @@ public class RdpHostControl : UserControl
         _rdpClient.OnLogonError       += OnRdpLogonError;
         _rdpClient.OnAutoReconnecting += OnRdpAutoReconnecting;
         _rdpClient.OnAutoReconnected  += OnRdpAutoReconnected;
+        _rdpClient.OnReceivedTSPublicKey            += OnRdpReceivedTSPublicKey;
+        _rdpClient.OnAuthenticationWarningDisplayed += OnRdpAuthenticationWarningDisplayed;
+        _rdpClient.OnAuthenticationWarningDismissed += OnRdpAuthenticationWarningDismissed;
 
         Dock = DockStyle.Fill;
     }
@@ -65,7 +86,7 @@ public class RdpHostControl : UserControl
     /// Connects to host, limiting the session to the two specified monitors.
     /// Requires the disconnected state (<see cref="IsBusy"/> == false).
     /// </summary>
-    public void Connect(HostConfig host, int primaryMonitorIdx, int secondaryMonitorIdx, bool remoteWindowsKeys)
+    public void Connect(HostConfig host, RdpConnectOptions options)
     {
         if (IsBusy) throw new InvalidOperationException("Sesja jest już połączona.");
 
@@ -79,7 +100,12 @@ public class RdpHostControl : UserControl
             adv.ClearTextPassword    = SettingsService.GetPassword(host);
             adv.RDPPort              = host.Port;
             adv.EnableCredSspSupport = true;
-            adv.AuthenticationLevel  = 2;
+
+            // 0 = łącz bez ostrzeżenia, gdy certyfikatu hosta nie da się zweryfikować (bez okna, które
+            //     potrafi zawisnąć niewidoczne w pełnoekranowym oknie sesji); 2 = okno ostrzeżenia
+            // 0 = connect without warning when the host certificate can't be verified (no dialog that
+            //     can hang invisible in the full-screen session window); 2 = warning dialog
+            adv.AuthenticationLevel = options.AcceptAnyCertificate ? 0u : 2u;
 
             _rdpClient.FullScreen          = true;
             adv.ContainerHandledFullScreen = 1;
@@ -94,7 +120,7 @@ public class RdpHostControl : UserControl
 
             // 0 = kombinacje Windows lokalnie (bez hooka klawiatury — działają globalne skróty), 2 = zdalnie w pełnym ekranie
             // 0 = Windows combinations local (no keyboard hook — global hotkeys work), 2 = remote in full screen
-            try { _rdpClient.SecuredSettings2.KeyboardHookMode = remoteWindowsKeys ? 2 : 0; }
+            try { _rdpClient.SecuredSettings2.KeyboardHookMode = options.RemoteWindowsKeys ? 2 : 0; }
             catch (Exception ex) { Log.Warn($"KeyboardHookMode nie ustawione: {ex.Message}"); }
 
             // Wbudowane wznawianie po krótkich zerwaniach sieci
@@ -102,7 +128,7 @@ public class RdpHostControl : UserControl
             adv.EnableAutoReconnect  = true;
             adv.MaxReconnectAttempts = 20;
 
-            ConfigureMonitors(primaryMonitorIdx, secondaryMonitorIdx);
+            ConfigureMonitors(options.PrimaryMonitor, options.SecondaryMonitor);
 
             IsBusy = true;
             _rdpClient.Connect();
@@ -201,6 +227,32 @@ public class RdpHostControl : UserControl
     private void OnRdpAutoReconnected(object? sender, EventArgs e)
         => AutoReconnected?.Invoke(this, EventArgs.Empty);
 
+    /// <summary>
+    /// Klucz publiczny serwera (CredSSP/NLA) — tylko do logu; logowanie zawsze kontynuowane.
+    /// Server public key (CredSSP/NLA) — for the log only; logon always continues.
+    /// </summary>
+    private void OnRdpReceivedTSPublicKey(object sender, IMsTscAxEvents_OnReceivedTSPublicKeyEvent e)
+    {
+        e.pfContinueLogon = true;
+        try
+        {
+            // BSTR z danymi binarnymi — surowe bajty bez konwersji kodowania
+            // BSTR carrying binary data — raw bytes without encoding conversion
+            byte[] hash = SHA256.HashData(MemoryMarshal.AsBytes((e.publicKey ?? string.Empty).AsSpan()));
+            ServerKeyReceived?.Invoke(this, Convert.ToHexString(hash));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"{_rdpClient.Server}: nie można obliczyć odcisku klucza: {ex.Message}");
+        }
+    }
+
+    private void OnRdpAuthenticationWarningDisplayed(object? sender, EventArgs e)
+        => CertificatePromptShown?.Invoke(this, EventArgs.Empty);
+
+    private void OnRdpAuthenticationWarningDismissed(object? sender, EventArgs e)
+        => CertificatePromptDismissed?.Invoke(this, EventArgs.Empty);
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
@@ -227,6 +279,9 @@ public class RdpHostControl : UserControl
             _rdpClient.OnLogonError       -= OnRdpLogonError;
             _rdpClient.OnAutoReconnecting -= OnRdpAutoReconnecting;
             _rdpClient.OnAutoReconnected  -= OnRdpAutoReconnected;
+            _rdpClient.OnReceivedTSPublicKey            -= OnRdpReceivedTSPublicKey;
+            _rdpClient.OnAuthenticationWarningDisplayed -= OnRdpAuthenticationWarningDisplayed;
+            _rdpClient.OnAuthenticationWarningDismissed -= OnRdpAuthenticationWarningDismissed;
             Disconnect();
             _rdpClient.Dispose();
         }

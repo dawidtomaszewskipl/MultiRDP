@@ -48,6 +48,17 @@ public class AppSettings
     public bool RemoteWindowsKeys { get; set; } = false;
 
     /// <summary>
+    /// true (domyślnie): certyfikat hosta akceptowany bez weryfikacji i bez okna ostrzeżenia
+    /// (AuthenticationLevel = 0) — odcisk klucza serwera trafia do logu.
+    /// false: okno ostrzeżenia kontrolki RDP (AuthenticationLevel = 2), wymaga potwierdzenia operatora.
+    ///
+    /// true (default): host certificate accepted without verification and without a warning dialog
+    /// (AuthenticationLevel = 0) — the server key fingerprint is logged.
+    /// false: RDP control warning dialog (AuthenticationLevel = 2), requires operator confirmation.
+    /// </summary>
+    public bool AcceptAnyCertificate { get; set; } = true;
+
+    /// <summary>
     /// Doprowadza ustawienia do poprawnego stanu (1–4 hosty, indeksy w zakresie).
     /// Brings settings into a valid state (1–4 hosts, indices in range).
     /// </summary>
@@ -71,6 +82,7 @@ public class AppSettings
         SecondaryMonitorIndex = SecondaryMonitorIndex,
         ActiveHostIndex       = ActiveHostIndex,
         AutoReconnect         = AutoReconnect,
-        RemoteWindowsKeys     = RemoteWindowsKeys
+        RemoteWindowsKeys     = RemoteWindowsKeys,
+        AcceptAnyCertificate  = AcceptAnyCertificate
     };
 }

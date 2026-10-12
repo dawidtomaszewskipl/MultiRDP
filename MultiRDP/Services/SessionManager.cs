@@ -96,13 +96,15 @@ public sealed class SessionManager : IDisposable
             if (remaining.Remove(host.Id, out var session))
             {
                 bool reconnect = monitorsChanged ||
-                                 session.RemoteWindowsKeys != settings.RemoteWindowsKeys ||
+                                 session.RemoteWindowsKeys    != settings.RemoteWindowsKeys ||
+                                 session.AcceptAnyCertificate != settings.AcceptAnyCertificate ||
                                  !session.Host.ConnectionEquals(host);
 
-                session.Index             = i;
-                session.Host              = host;
-                session.AutoReconnect     = settings.AutoReconnect;
-                session.RemoteWindowsKeys = settings.RemoteWindowsKeys;
+                session.Index                = i;
+                session.Host                 = host;
+                session.AutoReconnect        = settings.AutoReconnect;
+                session.RemoteWindowsKeys    = settings.RemoteWindowsKeys;
+                session.AcceptAnyCertificate = settings.AcceptAnyCertificate;
                 if (monitorsChanged) session.SetMonitors(_primaryMonitor, _secondaryMonitor);
                 if (reconnect) toConnect.Add(session);
             }

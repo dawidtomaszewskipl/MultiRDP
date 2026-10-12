@@ -26,6 +26,7 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
     private bool _disposed;
     private int  _primaryMonitor;
     private int  _secondaryMonitor;
+    private string? _serverKey;      // odcisk klucza z poprzedniego połączenia / key fingerprint from the previous connection
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Shortcut), nameof(ToolTip))]
@@ -62,7 +63,8 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
         }
     }
 
-    public bool RemoteWindowsKeys { get; set; }
+    public bool RemoteWindowsKeys    { get; set; }
+    public bool AcceptAnyCertificate { get; set; }
 
     public SessionWindow Window { get; }
 
@@ -83,8 +85,9 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
         Host              = host;
         _primaryMonitor   = settings.PrimaryMonitorIndex;
         _secondaryMonitor = settings.SecondaryMonitorIndex;
-        AutoReconnect     = settings.AutoReconnect;
-        RemoteWindowsKeys = settings.RemoteWindowsKeys;
+        AutoReconnect        = settings.AutoReconnect;
+        RemoteWindowsKeys    = settings.RemoteWindowsKeys;
+        AcceptAnyCertificate = settings.AcceptAnyCertificate;
 
         Window = new SessionWindow(_primaryMonitor, _secondaryMonitor);
 
@@ -94,9 +97,24 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
         control.ConnectionError  += OnConnectionError;
         control.AutoReconnecting += OnAutoReconnecting;
         control.AutoReconnected  += OnConnected;
+        control.ServerKeyReceived          += OnServerKeyReceived;
+        control.CertificatePromptShown     += OnCertificatePromptShown;
+        control.CertificatePromptDismissed += OnCertificatePromptDismissed;
     }
 
     private RdpHostControl Control => Window.RdpControl;
+
+    partial void OnHostChanged(HostConfig? oldValue, HostConfig newValue)
+    {
+        // Inny serwer = inny klucz; nie zgłaszaj tego jako zmiany klucza
+        // Different server = different key; don't report it as a key change
+        if (oldValue is null ||
+            !string.Equals(oldValue.Address, newValue.Address, StringComparison.OrdinalIgnoreCase) ||
+            oldValue.Port != newValue.Port)
+        {
+            _serverKey = null;
+        }
+    }
 
     /// <summary>Zmienia parę monitorów (zadziała przy następnym połączeniu) / Changes monitor pair (applies on next connect)</summary>
     public void SetMonitors(int primary, int secondary)
@@ -156,7 +174,8 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
             SetState(SessionState.Connecting, "Łączenie…");
 
         Log.Info($"[{Name}] Łączenie z {Host.Address}:{Host.Port}");
-        Control.Connect(Host, _primaryMonitor, _secondaryMonitor, RemoteWindowsKeys);
+        Control.Connect(Host, new RdpConnectOptions(
+            _primaryMonitor, _secondaryMonitor, RemoteWindowsKeys, AcceptAnyCertificate));
     }
 
     private void OnConnected(object? sender, EventArgs e)
@@ -170,6 +189,32 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
     {
         SetState(SessionState.Reconnecting, $"Wznawianie sesji (próba {attempt})…");
         Log.Warn($"[{Name}] Wbudowane wznawianie, próba {attempt}");
+    }
+
+    /// <summary>
+    /// Przy automatycznej akceptacji certyfikatu log jest jedynym śladem tożsamości hosta.
+    /// With automatic certificate acceptance the log is the only trace of the host identity.
+    /// </summary>
+    private void OnServerKeyReceived(object? sender, string fingerprint)
+    {
+        if (_serverKey is not null && _serverKey != fingerprint)
+            Log.Warn($"[{Name}] Klucz serwera {Host.Address} ZMIENIŁ SIĘ: {_serverKey} → {fingerprint}");
+        else
+            Log.Info($"[{Name}] Klucz serwera {Host.Address} SHA-256: {fingerprint}");
+        _serverKey = fingerprint;
+    }
+
+    private void OnCertificatePromptShown(object? sender, EventArgs e)
+    {
+        // Okno ostrzeżenia leży w oknie sesji — bez tego zakładka wyglądałaby na zawieszoną
+        // The warning dialog sits in the session window — without this the tab would look stuck
+        SetState(SessionState.Connecting, "Czeka na potwierdzenie certyfikatu hosta — przełącz na tę zakładkę");
+        Log.Info($"[{Name}] Wyświetlono ostrzeżenie o certyfikacie hosta");
+    }
+
+    private void OnCertificatePromptDismissed(object? sender, EventArgs e)
+    {
+        if (State == SessionState.Connecting) StatusText = "Łączenie…";
     }
 
     private void OnDisconnected(object? sender, RdpDisconnectInfo info)
@@ -249,6 +294,9 @@ public sealed partial class RdpSession : ObservableObject, IDisposable
         control.ConnectionError  -= OnConnectionError;
         control.AutoReconnecting -= OnAutoReconnecting;
         control.AutoReconnected  -= OnConnected;
+        control.ServerKeyReceived          -= OnServerKeyReceived;
+        control.CertificatePromptShown     -= OnCertificatePromptShown;
+        control.CertificatePromptDismissed -= OnCertificatePromptDismissed;
 
         control.Disconnect();
         if (!Window.IsClosed)

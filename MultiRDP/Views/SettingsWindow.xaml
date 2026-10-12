@@ -421,6 +421,13 @@
                                    TextWrapping="Wrap"
                                    Margin="22,0,0,0"
                                    Text="Gdy zaznaczone, klient RDP przechwytuje klawiaturę i skróty Ctrl+Alt+1..4 nie przełączają zakładek, kiedy fokus jest w sesji."/>
+                        <CheckBox IsChecked="{Binding AcceptAnyCertificate}"
+                                  Margin="0,8,0,6"
+                                  Content="Akceptuj automatycznie certyfikat hosta (bez weryfikacji)"/>
+                        <TextBlock Style="{StaticResource LabelStyle}"
+                                   TextWrapping="Wrap"
+                                   Margin="22,0,0,0"
+                                   Text="Brak okna ostrzeżenia, które potrafi zablokować łączenie. Nie chroni przed podszyciem się pod host — odcisk klucza serwera (i jego zmiana) jest zapisywany w logu. Po odznaczeniu kontrolka RDP pyta o potwierdzenie."/>
                     </StackPanel>
                 </Border>
 
